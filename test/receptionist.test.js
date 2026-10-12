@@ -38,6 +38,8 @@ test("dashboard returns demo schedule, care team, audit data, and SQLite health"
   assert.ok(data.audit.length >= 1);
   const health = await (await fetch(`${baseUrl}/api/health`)).json();
   assert.equal(health.database, "sqlite");
+  assert.equal(health.liveTelephony, false);
+  assert.equal(health.callNumber, null);
 });
 
 test("books only a free doctor slot and rejects conflicts", async () => {
@@ -124,13 +126,28 @@ test("Twilio SMS webhook returns TwiML and health reports demo mode", async () =
   assert.equal(health.mode, "demo");
   const greeting = await fetch(`${baseUrl}/api/twilio/voice`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "From=%2B919911111111&CallSid=CA-demo" });
   assert.match(await greeting.text(), /<Gather/);
-  const specialty = await fetch(`${baseUrl}/api/twilio/voice?step=specialty`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "From=%2B919911111111&SpeechResult=cardiology&patient=Voice%20Test" });
+  const urgentCall = await fetch(`${baseUrl}/api/twilio/voice`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "From=%2B919922222222&CallSid=CA-urgent&SpeechResult=I%20have%20chest%20pain" });
+  const urgentResponse = await urgentCall.text();
+  assert.match(urgentResponse, /call 112 now/i);
+  assert.match(urgentResponse, /<Hangup\/>/);
+  const urgentDashboard = await (await fetch(`${baseUrl}/api/dashboard`)).json();
+  assert.ok(urgentDashboard.escalations.some((item) => item.reason.includes("Urgent language detected during phone call")));
+  const identity = await fetch(`${baseUrl}/api/twilio/voice?step=identity`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "From=%2B919911111111&CallSid=CA-demo&SpeechResult=Voice%20Test" });
+  assert.match(await identity.text(), /Which specialty/);
+  const specialty = await fetch(`${baseUrl}/api/twilio/voice?step=specialty`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "From=%2B919911111111&CallSid=CA-demo&SpeechResult=cardiology" });
   const offer = await specialty.text();
   assert.match(offer, /<Gather/);
   assert.match(offer, /appointment tomorrow/i);
   const currentSchedule = await (await fetch(`${baseUrl}/api/dashboard`)).json();
   const available = ["09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "12:00", "14:00", "14:30", "15:00", "15:30", "16:00"].find((time) => !currentSchedule.appointments.some((item) => item.doctorId === "D-101" && item.date === "2026-10-13" && item.time === time && item.status !== "Cancelled"));
   assert.ok(available, "voice test should have a free demo slot");
-  const confirm = await fetch(`${baseUrl}/api/twilio/voice?step=confirm&doctor=D-101&date=2026-10-13&time=${encodeURIComponent(available)}&caller=%2B919911111111&patient=Voice%20Test`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "Digits=1&From=%2B919911111111" });
+  const confirm = await fetch(`${baseUrl}/api/twilio/voice?step=confirm`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "Digits=1&From=%2B919911111111&CallSid=CA-demo" });
   assert.match(await confirm.text(), /Your appointment is booked/);
+  const afterCall = await (await fetch(`${baseUrl}/api/dashboard`)).json();
+  assert.ok(afterCall.appointments.some((item) => item.source === "Phone" && item.phone === "+919911111111"));
+  assert.ok(afterCall.appointments.some((item) => item.source === "Phone" && item.patient === "Voice Test"));
+  assert.ok(afterCall.messages.some((item) => item.channel === "Phone" && item.direction === "Outbound" && item.body.includes("appointment is booked")));
+  const logo = await fetch(`${baseUrl}/assets/proactive-care-mark.png`);
+  assert.equal(logo.status, 200);
+  assert.equal(logo.headers.get("content-type"), "image/png");
 });

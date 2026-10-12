@@ -10,7 +10,7 @@ Requires Node.js 22.5 or later (for the built-in SQLite module).
 npm start
 ```
 
-Open [http://localhost:3000](http://localhost:3000). For auto-restart while editing, use `npm run dev`. To run the automated flows, use `npm test`.
+Open [http://localhost:3000](http://localhost:3000). For auto-restart while editing, use `npm run dev`. To run the automated flows, use `npm test`. The dashboard's **Start call simulator** lets you speak or type through a phone-style booking locally; bookings and call records appear in SQLite and the dashboard.
 
 The dashboard uses a simulated hospital. Appointment, conversation, message, opt-out, handoff, and audit records persist in `data/proactive-care.sqlite`. Sample data is inserted the first time the database is initialized; subsequent restarts preserve changes. It does not contain real patient data and is not intended for clinical or production use.
 
@@ -54,13 +54,13 @@ Every response identifies the service as an automated assistant. This demo uses 
 
 ## Phone and messaging setup
 
-The app runs locally and the simulator works without any credentials. A real phone number cannot call the local laptop merely by starting the app. To test a real call, you need a Twilio account with a voice-enabled number (provider account and phone number are not included in this project), then make this server reachable from the internet over HTTPS. Set `PUBLIC_BASE_URL` and configure the Twilio number's voice webhook to:
+The app runs locally and the simulator works without any credentials. **There is no public phone number provisioned for this project yet.** Starting the app does not create or rent a number. To receive an actual phone call, get a voice-enabled number in a Twilio account, then expose this server on a public HTTPS URL. Set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, and `PUBLIC_BASE_URL` in the ignored `.env.local` file and restart with `npm start`. The dashboard will show the configured call-in number only after those values are set. Configure that number's voice webhook to:
 
 ```text
 POST https://YOUR_PUBLIC_HOST/api/twilio/voice
 ```
 
-For incoming SMS or WhatsApp, use `POST https://YOUR_PUBLIC_HOST/api/twilio/sms`. Copy `.env.example` to `.env`, add `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, and `PUBLIC_BASE_URL`, then restart. For local experiments, a secure tunnel such as ngrok or Cloudflare Tunnel can expose port 3000; the tunnel URL must be entered in the provider console. `GET /api/health` reports database and telephony credential status. The voice webhook returns TwiML and books a confirmed demo appointment after the caller accepts the offered slot. This does not purchase or provision a phone number. Before real patient use, add Twilio signature validation, authenticated staff access, validated identity, encrypted production data storage, delivery callbacks, retries, rate limiting, and healthcare privacy/security review.
+For incoming SMS or WhatsApp, use `POST https://YOUR_PUBLIC_HOST/api/twilio/sms`. For local experiments, a secure tunnel such as ngrok or Cloudflare Tunnel can expose port 3000; configure its HTTPS URL as the provider webhook host. `GET /api/health` reports whether a live phone line is configured without exposing credentials. The voice webhook books the offered available slot only after caller confirmation and records the call and appointment in the SQLite dashboard. This does not purchase or provision a phone number. Before real patient use, add Twilio signature validation, authenticated staff access, validated identity, encrypted production data storage, delivery callbacks, retries, rate limiting, and healthcare privacy/security review.
 
 ## Configuration and next production steps
 

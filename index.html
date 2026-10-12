@@ -13,7 +13,7 @@
 <body>
   <div class="shell">
     <aside class="sidebar">
-      <a class="brand" href="#dashboard"><span class="brand-icon">✳</span><span><b>proactive</b><small>CARE HOSPITAL</small></span></a>
+      <a class="brand" href="#dashboard"><img class="brand-icon" src="/assets/proactive-care-mark.png" alt="" /><span><b>Proactive Care</b><small>HOSPITAL RECEPTION</small></span></a>
       <div class="nav-label">WORKSPACE</div>
       <nav>
         <a class="nav-item active" href="#dashboard"><span>▦</span> Dashboard</a>
@@ -48,7 +48,7 @@
         </section>
         <section class="lower-grid">
           <div class="panel handoff-panel" id="handoffs"><div class="panel-header"><div class="heading-with-dot"><span class="orange-dot"></span><div><h2>Handoff queue</h2><p>Patients waiting to speak to your team</p></div></div><button class="text-action">View queue <span>→</span></button></div><div id="handoffList" class="handoff-list"></div></div>
-          <div class="panel assistant-panel"><div class="assistant-decoration">✳</div><div class="assistant-title"><span class="assistant-logo">✳</span><span><b>Proactive Assistant</b><small><i></i> Online and ready</small></span></div><p>Your virtual receptionist is handling routine questions and appointments around the clock.</p><div class="assistant-stat"><div class="stat-avatar-stack"><i>👤</i><i>👤</i><i>👤</i></div><span><b id="conversationTotal">18 conversations</b> handled today</span></div><button id="chatAssistant" class="assistant-chat-button">Try the assistant <span>→</span></button><button id="callAssistant" class="assistant-chat-button demo-call-link">☎ Start demo call <span>→</span></button></div>
+          <div class="panel assistant-panel"><div class="assistant-decoration">✚</div><div class="assistant-title"><img class="assistant-logo" src="/assets/proactive-care-mark.png" alt="" /><span><b>Proactive Care Assistant</b><small><i></i> <span id="phoneLineStatus">Local call simulator ready</span></small></span></div><p>Your virtual receptionist helps callers book with available doctors and records activity in the live SQLite schedule.</p><div class="assistant-stat"><div class="stat-avatar-stack"><i>👤</i><i>👤</i><i>👤</i></div><span><b id="conversationTotal">18 conversations</b> handled today</span></div><button id="chatAssistant" class="assistant-chat-button">Try the assistant <span>→</span></button><button id="callAssistant" class="assistant-chat-button demo-call-link">☎ Start call simulator <span>→</span></button></div>
         </section>
         <section class="panel staff-panel" id="doctors"><div class="panel-header"><div><h2>Care team</h2><p>Doctors accepting appointments</p></div><button class="text-action" id="viewDoctors">View all <span>→</span></button></div><div class="doctor-list" id="doctorList"></div></section>
         <section class="quick-tools"><div><span class="quick-icon">✎</span><span><b>Update knowledge base</b><small>Edit FAQs and hospital information</small></span><button id="knowledgeLink">→</button></div><div><span class="quick-icon delay-icon">◷</span><span><b>Report a doctor delay</b><small>Notify patients of schedule changes</small></span><button id="delayAction">→</button></div><div><span class="quick-icon audit-icon">▤</span><span><b>View audit log</b><small>See recent assistant activity</small></span><button id="auditAction">→</button></div></section>

@@ -9,6 +9,7 @@ const messages = all("messages");
 const escalationQueue = all("escalations");
 const audit = all("audit");
 const conversations = new Set(db.prepare("SELECT phone FROM conversations").all().map((row) => row.phone));
+const voiceCalls = new Map();
 const slots = ["09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "12:00", "14:00", "14:30", "15:00", "15:30", "16:00"];
 const simulatedToday = "2026-10-12";
 function addDays(date, count) {
@@ -39,6 +40,10 @@ async function body(req) {
   return JSON.parse(raw);
 }
 function doctorFor(id) { return doctors.find((doctor) => doctor.id === id); }
+function phoneConfiguration() {
+  const connected = Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER && process.env.PUBLIC_BASE_URL);
+  return { connected, number: connected ? process.env.TWILIO_PHONE_NUMBER : null };
+}
 function slotAvailable(doctorId, date, time) {
   return !appointments.some((appointment) => appointment.doctorId === doctorId && appointment.date === date && appointment.time === time && appointment.status !== "Cancelled");
 }
@@ -145,7 +150,7 @@ const app = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   try {
     if (req.method === "GET" && url.pathname === "/api/dashboard") {
-      return json(res, 200, { doctors, departments, appointments, messages, escalations: escalationQueue, audit, simulatedToday, metrics: { todayAppointments: appointments.filter((item) => item.date === simulatedToday && item.status !== "Cancelled").length, remindersSent: messages.filter((message) => /reminder/i.test(message.body)).length, activeConversations: conversations.size, pendingHandoffs: escalationQueue.filter((item) => item.status === "Waiting").length, completionRate: "94%", avgResponse: "< 1 min" } });
+      return json(res, 200, { doctors, departments, appointments, messages, escalations: escalationQueue, audit, simulatedToday, telephony: phoneConfiguration(), metrics: { todayAppointments: appointments.filter((item) => item.date === simulatedToday && item.status !== "Cancelled").length, remindersSent: messages.filter((message) => /reminder/i.test(message.body)).length, activeConversations: conversations.size, pendingHandoffs: escalationQueue.filter((item) => item.status === "Waiting").length, completionRate: "94%", avgResponse: "< 1 min" } });
     }
     if (req.method === "GET" && url.pathname === "/api/availability") {
       const doctor = doctorFor(url.searchParams.get("doctorId"));
@@ -223,27 +228,44 @@ const app = http.createServer(async (req, res) => {
       const gather = (action, prompt, hints = "appointment, booking, cancel, reschedule, cardiology, dermatology, pediatrics, orthopedics, general medicine") => `<Gather input="dtmf speech" language="en-IN" speechTimeout="auto" hints="${escapeXml(hints)}" action="${action}" method="POST">${speech(prompt)}</Gather>`;
       const response = (xml) => { res.writeHead(200, { "Content-Type": "text/xml; charset=utf-8" }); res.end(`<?xml version="1.0" encoding="UTF-8"?><Response>${xml}</Response>`); };
       const escapeXml = (s) => String(s).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+      if (/\b(chest pain|can't breathe|cannot breathe|difficulty breathing|severe bleeding|suicid|unconscious|stroke|heart attack|emergency)\b/i.test(name)) {
+        const patient = voiceCalls.get(String(input.CallSid || caller))?.patient || `Caller ${caller.slice(-4)}`;
+        enqueueEscalation(patient, caller, "Urgent language detected during phone call", [{ role: "patient", text: name }]);
+        addMessage(patient, "Phone", "Inbound", "Urgent language detected; message content withheld.", "Received");
+        const urgentReply = "If this may be an emergency, hang up and call 112 now, or go to the nearest emergency department. I am an automated receptionist and cannot assess symptoms. I have flagged this call for hospital staff.";
+        addMessage(patient, "Phone", "Outbound", urgentReply, "Completed");
+        return response(`${speech(urgentReply)}<Hangup/>`);
+      }
       if (url.searchParams.get("step") === "specialty") {
         const request = (step || name).toLowerCase();
         const specialty = doctors.find((doctor) => request.includes(doctor.specialty.toLowerCase()) || request.includes(doctor.id.toLowerCase()));
         if (!specialty) return response(`${speech("Sorry, I could not match that specialty. Please call again or use the hospital website to book.")}<Hangup/>`);
-        const booking = { doctorId: specialty.id, phone: caller, patient: url.searchParams.get("patient") || `Caller ${caller.slice(-4)}`, date: addDays(simulatedToday, 1), reason: `${specialty.specialty} appointment`, source: "Phone" };
+        const prior = voiceCalls.get(String(input.CallSid || caller));
+        const booking = { doctorId: specialty.id, phone: caller, patient: prior?.patient || `Caller ${caller.slice(-4)}`, date: addDays(simulatedToday, 1), reason: `${specialty.specialty} appointment`, source: "Phone" };
         const time = slots.find((candidate) => slotAvailable(specialty.id, booking.date, candidate));
         if (!time) return response(`${speech(`Sorry, there are no demo slots available with ${specialty.name} tomorrow.`)}<Hangup/>`);
-        return response(gather(`/api/twilio/voice?step=confirm&doctor=${encodeURIComponent(specialty.id)}&date=${booking.date}&time=${time}&caller=${encodeURIComponent(caller)}`, `${specialty.name} has an available demo appointment tomorrow at ${formatTime(Number(time.slice(0, 2)) * 60 + Number(time.slice(3)))}. Press or say 1 to book this time, or 2 to end the call.`, "1, 2, yes, no"));
+        voiceCalls.set(String(input.CallSid || caller), { ...booking, time });
+        return response(gather("/api/twilio/voice?step=confirm", `${specialty.name} has an available appointment tomorrow at ${formatTime(Number(time.slice(0, 2)) * 60 + Number(time.slice(3)))}. Press or say 1 to book this time, or 2 to end the call.`, "1, 2, yes, no"));
       }
       if (url.searchParams.get("step") === "confirm") {
         if (!["1", "yes", "book", "confirm"].some((answer) => step.toLowerCase().includes(answer))) return response(`${speech("Okay, I have not booked anything. Goodbye.")}<Hangup/>`);
-        const doctor = doctorFor(url.searchParams.get("doctor"));
-        const phone = url.searchParams.get("caller") || caller;
-        const date = url.searchParams.get("date");
-        const time = url.searchParams.get("time");
+        const call = voiceCalls.get(String(input.CallSid || caller));
+        const doctor = doctorFor(call?.doctorId);
+        const phone = call?.phone || caller;
+        const date = call?.date;
+        const time = call?.time;
+        if (!call) return response(`${speech("I lost the appointment details for this call. For your privacy, please start the booking again.")}<Hangup/>`);
         if (!doctor || !slotAvailable(doctor.id, date, time)) return response(`${speech("That slot was just taken. Please call again to hear current availability.")}<Hangup/>`);
-        const appointment = { id: `APT-${Date.now().toString().slice(-6)}-${Math.random().toString(36).slice(2, 4)}`, patient: url.searchParams.get("patient") || `Caller ${phone.slice(-4)}`, phone, doctorId: doctor.id, date, time, status: "Confirmed", reason: `${doctor.specialty} appointment`, source: "Phone" };
+        const appointment = { id: `APT-${Date.now().toString().slice(-6)}-${Math.random().toString(36).slice(2, 4)}`, patient: call.patient, phone, doctorId: doctor.id, date, time, status: "Confirmed", reason: `${doctor.specialty} appointment`, source: "Phone" };
         try { db.prepare("INSERT INTO appointments VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(appointment.id, appointment.patient, appointment.phone, appointment.doctorId, appointment.date, appointment.time, appointment.status, appointment.reason, appointment.source); }
         catch (error) { if (String(error.message).includes("UNIQUE constraint failed")) return response(`${speech("That slot was just taken. Please call again to hear current availability.")}<Hangup/>`); throw error; }
-        appointments.unshift(appointment); log("Phone appointment booked", `${appointment.id} · ${doctor.name} · caller ending ${phone.slice(-4)}`);
-        return response(`${speech(`Your appointment is booked with ${doctor.name} tomorrow at ${formatTime(Number(time.slice(0, 2)) * 60 + Number(time.slice(3)))}. Your reference number is ${appointment.id}. Thank you for calling Proactive Care. Goodbye.`)}<Hangup/>`);
+        appointments.unshift(appointment);
+        voiceCalls.delete(String(input.CallSid || caller));
+        const confirmation = `Your appointment is booked with ${doctor.name} tomorrow at ${formatTime(Number(time.slice(0, 2)) * 60 + Number(time.slice(3)))}. Your reference number is ${appointment.id}. Thank you for calling Proactive Care. Goodbye.`;
+        addMessage(appointment.patient, "Phone", "Inbound", `Called to book ${doctor.specialty}.`, "Received");
+        addMessage(appointment.patient, "Phone", "Outbound", confirmation, "Completed");
+        log("Phone appointment booked", `${appointment.id} · ${doctor.name} · caller ending ${phone.slice(-4)}`);
+        return response(`${speech(confirmation)}<Hangup/>`);
       }
       const first = gather("/api/twilio/voice?step=menu", "Hello, you have reached Proactive Care Hospital's automated receptionist. To book an appointment, press or say 1. To hear our departments, press or say 2.", "1, 2, one, two, appointment, book, departments");
       if (!step && !name) return response(first);
@@ -254,17 +276,24 @@ const app = http.createServer(async (req, res) => {
       }
       if (url.searchParams.get("step") === "identity") {
         const callerName = name || `Caller ${caller.slice(-4)}`;
-        return response(gather(`/api/twilio/voice?step=specialty&patient=${encodeURIComponent(callerName)}`, `Thank you ${callerName}. Which specialty do you need: cardiology, dermatology, pediatrics, orthopedics, or general medicine?`));
+        voiceCalls.set(String(input.CallSid || caller), { phone: caller, patient: callerName });
+        return response(gather("/api/twilio/voice?step=specialty", `Thank you ${callerName}. Which specialty do you need: cardiology, dermatology, pediatrics, orthopedics, or general medicine?`));
       }
       if (url.searchParams.get("step") === "specialty") return response(`${speech("I could not understand. Please call again and clearly say the medical specialty, or press 2 for a list of departments.")}<Hangup/>`);
       return response(first);
     }
-    if (req.method === "GET" && url.pathname === "/api/health") return json(res, 200, { status: "ok", mode: "demo", database: "sqlite", databaseFile: "data/proactive-care.sqlite", liveTelephony: Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER) });
+    if (req.method === "GET" && url.pathname === "/api/health") {
+      const telephony = phoneConfiguration();
+      return json(res, 200, { status: "ok", mode: telephony.connected ? "connected" : "demo", database: "sqlite", databaseFile: "data/proactive-care.sqlite", liveTelephony: telephony.connected, callNumber: telephony.number, setup: telephony.connected ? "Configure your provider voice webhook to POST /api/twilio/voice." : "Connect a voice-enabled telephony number and public HTTPS webhook to enable incoming calls." });
+    }
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
       const fs = await import("node:fs/promises"); res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); res.end(await fs.readFile(new URL("./index.html", import.meta.url))); return;
     }
     if (req.method === "GET" && url.pathname === "/styles.css") {
       const fs = await import("node:fs/promises"); res.writeHead(200, { "Content-Type": "text/css; charset=utf-8" }); res.end(await fs.readFile(new URL("./styles.css", import.meta.url))); return;
+    }
+    if (req.method === "GET" && url.pathname === "/assets/proactive-care-mark.png") {
+      const fs = await import("node:fs/promises"); res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" }); res.end(await fs.readFile(new URL("./assets/proactive-care-mark.png", import.meta.url))); return;
     }
     if (req.method === "GET" && url.pathname === "/app.js") {
       const fs = await import("node:fs/promises"); res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" }); res.end(await fs.readFile(new URL("./client.js", import.meta.url))); return;
