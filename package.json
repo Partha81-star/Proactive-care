@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "node --env-file-if-exists=.env.local --watch server.js",
     "start": "node --env-file-if-exists=.env.local server.js",
+    "voice-gateway": "node --env-file-if-exists=.env.local voice-gateway.js",
     "test": "node --test"
   }
 }

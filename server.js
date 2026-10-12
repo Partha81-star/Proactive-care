@@ -41,7 +41,7 @@ async function body(req) {
 }
 function doctorFor(id) { return doctors.find((doctor) => doctor.id === id); }
 function phoneConfiguration() {
-  const connected = Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER && process.env.PUBLIC_BASE_URL);
+  const connected = Boolean(process.env.TWILIO_PHONE_NUMBER && process.env.PUBLIC_BASE_URL && (process.env.TWILIO_AUTH_TOKEN || process.env.VOICE_GATEWAY_TOKEN));
   return { connected, number: connected ? process.env.TWILIO_PHONE_NUMBER : null };
 }
 function slotAvailable(doctorId, date, time) {
@@ -225,7 +225,7 @@ const app = http.createServer(async (req, res) => {
       const step = String(input.Digits || "").trim();
       const name = String(input.SpeechResult || "").trim().slice(0, 80);
       const speech = (text) => `<Say voice="Polly.Aditi" language="en-IN">${escapeXml(text)}</Say>`;
-      const gather = (action, prompt, hints = "appointment, booking, cancel, reschedule, cardiology, dermatology, pediatrics, orthopedics, general medicine") => `<Gather input="dtmf speech" language="en-IN" speechTimeout="auto" hints="${escapeXml(hints)}" action="${action}" method="POST">${speech(prompt)}</Gather>`;
+      const gather = (action, prompt, hints = "appointment, booking, cancel, reschedule, cardiology, dermatology, pediatrics, orthopedics, general medicine") => `<Gather input="dtmf speech" numDigits="1" timeout="8" actionOnEmptyResult="true" language="en-IN" speechTimeout="auto" hints="${escapeXml(hints)}" action="${escapeXml(action)}" method="POST">${speech(prompt)}</Gather>`;
       const response = (xml) => { res.writeHead(200, { "Content-Type": "text/xml; charset=utf-8" }); res.end(`<?xml version="1.0" encoding="UTF-8"?><Response>${xml}</Response>`); };
       const escapeXml = (s) => String(s).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
       if (/\b(chest pain|can't breathe|cannot breathe|difficulty breathing|severe bleeding|suicid|unconscious|stroke|heart attack|emergency)\b/i.test(name)) {
@@ -248,7 +248,7 @@ const app = http.createServer(async (req, res) => {
         return response(gather("/api/twilio/voice?step=confirm", `${specialty.name} has an available appointment tomorrow at ${formatTime(Number(time.slice(0, 2)) * 60 + Number(time.slice(3)))}. Press or say 1 to book this time, or 2 to end the call.`, "1, 2, yes, no"));
       }
       if (url.searchParams.get("step") === "confirm") {
-        if (!["1", "yes", "book", "confirm"].some((answer) => step.toLowerCase().includes(answer))) return response(`${speech("Okay, I have not booked anything. Goodbye.")}<Hangup/>`);
+        if (!/^(1|one|yes|yes please|book|book it|confirm|confirmed)[.! ]*$/i.test(step || name)) return response(`${speech("Okay, I have not booked anything. Goodbye.")}<Hangup/>`);
         const call = voiceCalls.get(String(input.CallSid || caller));
         const doctor = doctorFor(call?.doctorId);
         const phone = call?.phone || caller;
@@ -281,6 +281,16 @@ const app = http.createServer(async (req, res) => {
       }
       if (url.searchParams.get("step") === "specialty") return response(`${speech("I could not understand. Please call again and clearly say the medical specialty, or press 2 for a list of departments.")}<Hangup/>`);
       return response(first);
+    }
+    if (req.method === "POST" && url.pathname === "/api/twilio/voice/status") {
+      const input = await body(req);
+      if (!/^CA[a-f0-9]{32}$/i.test(input.CallSid || "") || !["queued", "initiated", "ringing", "in-progress", "completed", "busy", "failed", "no-answer", "canceled"].includes(input.CallStatus)) return json(res, 400, { error: "Invalid call status" });
+      const id = `CALL-${input.CallSid}-${input.CallStatus}`;
+      const entry = { id, action: "Phone call status", detail: `Call ending ${input.CallSid.slice(-6)} · ${input.CallStatus}`, time: new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }) };
+      const result = db.prepare("INSERT OR IGNORE INTO audit VALUES (?, ?, ?, ?)").run(entry.id, entry.action, entry.detail, entry.time);
+      if (result.changes) audit.unshift(entry);
+      if (["completed", "busy", "failed", "no-answer", "canceled"].includes(input.CallStatus)) voiceCalls.delete(input.CallSid);
+      return json(res, 200, { received: true });
     }
     if (req.method === "GET" && url.pathname === "/api/health") {
       const telephony = phoneConfiguration();

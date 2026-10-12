@@ -54,13 +54,13 @@ Every response identifies the service as an automated assistant. This demo uses 
 
 ## Phone and messaging setup
 
-The app runs locally and the simulator works without any credentials. **There is no public phone number provisioned for this project yet.** Starting the app does not create or rent a number. To receive an actual phone call, get a voice-enabled number in a Twilio account, then expose this server on a public HTTPS URL. Set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, and `PUBLIC_BASE_URL` in the ignored `.env.local` file and restart with `npm start`. The dashboard will show the configured call-in number only after those values are set. Configure that number's voice webhook to:
+The app includes a Twilio trial number configured for voice: `+1 229 663 4470`. It uses an English (India) speech and keypad flow to offer a doctor and available slot; confirm with “yes” or press 1 to save the appointment. Trial call features and calling region restrictions apply. To run your own deployment, expose the voice-only gateway over HTTPS. Set `TWILIO_PHONE_NUMBER`, `PUBLIC_BASE_URL`, and a random `VOICE_GATEWAY_TOKEN` (at least 32 characters) in the ignored `.env.local` file. Run the dashboard with `npm start`, the voice gateway with `npm run voice-gateway`, and a public tunnel to `http://localhost:3001`. Configure the Twilio voice webhook to the public `/voice/<VOICE_GATEWAY_TOKEN>/api/twilio/voice` route. The gateway only forwards Twilio call webhooks; it does not expose the dashboard or patient APIs.
 
 ```text
 POST https://YOUR_PUBLIC_HOST/api/twilio/voice
 ```
 
-For incoming SMS or WhatsApp, use `POST https://YOUR_PUBLIC_HOST/api/twilio/sms`. For local experiments, a secure tunnel such as ngrok or Cloudflare Tunnel can expose port 3000; configure its HTTPS URL as the provider webhook host. `GET /api/health` reports whether a live phone line is configured without exposing credentials. The voice webhook books the offered available slot only after caller confirmation and records the call and appointment in the SQLite dashboard. This does not purchase or provision a phone number. Before real patient use, add Twilio signature validation, authenticated staff access, validated identity, encrypted production data storage, delivery callbacks, retries, rate limiting, and healthcare privacy/security review.
+`GET /api/health` reports whether the phone line is configured without exposing credentials. Completed phone bookings are recorded in the SQLite schedule and dashboard. The included Cloudflare quick tunnel is for short demos; its public URL changes when restarted, so update the Twilio webhook each time. Before real patient use, add Twilio signature validation, authenticated staff access, validated identity, encrypted production data storage, delivery callbacks, retries, rate limiting, and healthcare privacy/security review.
 
 ## Configuration and next production steps
 
