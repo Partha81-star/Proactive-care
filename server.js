@@ -147,6 +147,12 @@ const app = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/dashboard") {
       return json(res, 200, { doctors, departments, appointments, messages, escalations: escalationQueue, audit, simulatedToday, metrics: { todayAppointments: appointments.filter((item) => item.date === simulatedToday && item.status !== "Cancelled").length, remindersSent: messages.filter((message) => /reminder/i.test(message.body)).length, activeConversations: conversations.size, pendingHandoffs: escalationQueue.filter((item) => item.status === "Waiting").length, completionRate: "94%", avgResponse: "< 1 min" } });
     }
+    if (req.method === "GET" && url.pathname === "/api/availability") {
+      const doctor = doctorFor(url.searchParams.get("doctorId"));
+      const date = url.searchParams.get("date");
+      if (!doctor || !/^\d{4}-\d{2}-\d{2}$/.test(date || "")) return json(res, 400, { error: "Choose a doctor and valid date." });
+      return json(res, 200, { doctor, date, slots: slots.filter((time) => slotAvailable(doctor.id, date, time)) });
+    }
     if (req.method === "POST" && url.pathname === "/api/chat") {
       const result = handleChat(await body(req));
       return json(res, 200, result);
@@ -261,7 +267,7 @@ const app = http.createServer(async (req, res) => {
       const fs = await import("node:fs/promises"); res.writeHead(200, { "Content-Type": "text/css; charset=utf-8" }); res.end(await fs.readFile(new URL("./styles.css", import.meta.url))); return;
     }
     if (req.method === "GET" && url.pathname === "/app.js") {
-      const fs = await import("node:fs/promises"); res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }); res.end(await fs.readFile(new URL("./client.js", import.meta.url))); return;
+      const fs = await import("node:fs/promises"); res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" }); res.end(await fs.readFile(new URL("./client.js", import.meta.url))); return;
     }
     json(res, 404, { error: "Not found" });
   } catch (error) {

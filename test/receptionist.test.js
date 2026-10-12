@@ -50,6 +50,9 @@ test("books only a free doctor slot and rejects conflicts", async () => {
   const db = new DatabaseSync(testDatabase);
   assert.equal(db.prepare("SELECT patient FROM appointments WHERE id = ?").get(first.body.appointment.id).patient, "Test Patient");
   db.close();
+  const availability = await fetch(`${baseUrl}/api/availability?doctorId=D-101&date=2026-10-20`);
+  const openSlots = await availability.json();
+  assert.equal(openSlots.slots.includes("09:00"), false);
 });
 
 test("assistant books a named specialty with a matching doctor", async () => {

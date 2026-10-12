@@ -42,6 +42,7 @@ Browser dashboard / chat simulator
 
 1. **Book:** The patient names a specialty. The agent selects the matching doctor, checks a free demo slot, creates a confirmed appointment, and returns the appointment ID. Staff can also book from **New appointment**.
    **Phone:** Twilio Voice calls enter `/api/twilio/voice`; callers choose booking, say their name and specialty, hear a demo availability slot, then confirm by speech or keypad. The slot uses simulated demo dates.
+   **Video/demo recording:** Select **Call demo** on the dashboard. The browser provides a call-style interface that speaks when browser speech synthesis is available, listens when browser speech recognition is available, and otherwise accepts typed turns. A confirmed demo booking is stored in SQLite and appears in the dashboard schedule.
 2. **Cancel/reschedule:** The demo can modify an existing appointment matched to the current demo phone. If it cannot establish that match, it asks for an appointment ID instead of revealing details. The schedule frees cancelled slots. The chat simulator intentionally uses a shared demo identity, so use separate phone identifiers when exercising these flows through the API.
 3. **Delay update:** Staff select a doctor, date, and delay. One notice is recorded per affected non-cancelled appointment, and identical repeats are deduplicated.
 4. **Facility FAQ:** Replies are grounded in the fixed entries in `data.js`. Unknown questions receive an uncertainty response and are placed in the human handoff queue.

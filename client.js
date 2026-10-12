@@ -48,7 +48,7 @@ function openModal(title, eyebrow, markup) {
   $("#modalBody").innerHTML = markup; $("#modalBackdrop").classList.remove("hidden");
   const focus = $("#modalBody input, #modalBody textarea, #modalBody select"); if (focus) focus.focus();
 }
-function closeModal() { $("#modalBackdrop").classList.add("hidden"); $("#modalBody").innerHTML = ""; }
+function closeModal() { window.activeCallDemoCleanup?.(); window.activeCallDemoCleanup = null; $("#modalBackdrop").classList.add("hidden"); $("#modalBody").innerHTML = ""; }
 function optionsForDoctors() { return state.doctors.map((doctor) => `<option value="${escapeHtml(doctor.id)}">${escapeHtml(doctor.name)} · ${escapeHtml(doctor.specialty)}</option>`).join(""); }
 function showAppointmentForm() {
   openModal("New appointment", "SCHEDULING", `<form id="appointmentForm"><div class="form-grid"><div class="field"><label for="patientName">Patient name</label><input id="patientName" name="patient" placeholder="Full name" required /></div><div class="field"><label for="patientPhone">Phone number</label><input id="patientPhone" name="phone" placeholder="+91 98765 43210" required /></div><div class="field full"><label for="appointmentDoctor">Doctor / specialty</label><select id="appointmentDoctor" name="doctorId">${optionsForDoctors()}</select></div><div class="field"><label for="appointmentDate">Date</label><input id="appointmentDate" name="date" type="date" value="${state.simulatedToday}" required /></div><div class="field"><label for="appointmentTime">Available time</label><select name="time"><option>09:00</option><option>09:30</option><option>10:00</option><option>10:30</option><option>11:00</option><option>11:30</option><option>12:00</option><option>14:00</option><option>14:30</option><option>15:00</option><option>15:30</option><option>16:00</option></select></div><div class="field full"><label for="appointmentReason">Reason for visit</label><input id="appointmentReason" name="reason" placeholder="e.g. General check-up" /></div></div><button class="modal-submit">Confirm appointment</button><p class="form-note">Only the minimum booking details are required. Available slots are checked when you confirm.</p><div id="formError" class="form-note" style="color:#bd645b"></div></form>`);
@@ -66,6 +66,63 @@ function showChat() {
       transcript.push({ role: "patient", text }, { role: "assistant", text: result.reply }); messages.scrollTop = messages.scrollHeight; await refresh();
     } catch { const replyBubble = document.createElement("div"); replyBubble.className = "bubble bot"; replyBubble.textContent = "I couldn’t send that just now. Please try again."; messages.append(replyBubble); }
   });
+}
+function showCallDemo() {
+  const recognizerAvailable = Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+  openModal("Call the virtual receptionist", "LIVE VOICE DEMO", `<div class="phone-stage"><div class="phone-orbit"><span class="phone-orbit-inner">✳</span></div><div class="call-status" id="callStatus">Ready when you are</div><div class="call-transcript" id="callTranscript"><div class="call-line agent-line">This is a live voice demo. Your spoken name is used only to label the demo appointment.</div></div><div class="call-controls"><button class="call-button" id="startCall" aria-label="Start call">☎</button><button class="call-mic hidden" id="micCall" aria-label="Speak">🎙</button><button class="call-end hidden" id="endCall" aria-label="End call">■</button></div><form class="call-input" id="callInputForm"><input id="callInput" placeholder="${recognizerAvailable ? "Or type what you would say…" : "Type your reply (microphone speech isn't supported here)"}" autocomplete="off"/><button>Send</button></form><div class="call-caption">${recognizerAvailable ? "Allow microphone access when prompted, then speak after the assistant finishes." : "Use the text box to play the same phone conversation flow."} Browser demo · No phone number required</div></div>`);
+  let stage = "idle"; let patient = ""; let doctor = null; let appointmentDate = ""; let appointmentTime = ""; let recognizer;
+  const transcript = $("#callTranscript"); const status = $("#callStatus");
+  const speechAvailable = recognizerAvailable && "speechSynthesis" in window;
+  const SpeechRecognizer = window.SpeechRecognition || window.webkitSpeechRecognition;
+  function say(message, onEnd = () => {}) {
+    status.textContent = "Receptionist speaking…"; addLine("assistant", message);
+    if (!speechAvailable) { status.textContent = "Your turn"; onEnd(); return; }
+    window.speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(message); utterance.lang = "en-IN"; utterance.rate = 0.92;
+    utterance.onend = () => { status.textContent = "Your turn"; onEnd(); }; utterance.onerror = () => { status.textContent = "Your turn"; onEnd(); }; window.speechSynthesis.speak(utterance);
+  }
+  function addLine(role, message) { const line = document.createElement("div"); line.className = `call-line ${role === "assistant" ? "agent-line" : "caller-line"}`; line.textContent = message; transcript.append(line); transcript.scrollTop = transcript.scrollHeight; }
+  async function listen() {
+    if (!SpeechRecognizer) { $("#micCall").classList.add("hidden"); status.textContent = "Type your reply below"; $("#callInput").focus(); return; }
+    recognizer?.abort(); recognizer = new SpeechRecognizer(); recognizer.lang = "en-IN"; recognizer.interimResults = false; recognizer.maxAlternatives = 1;
+    recognizer.onstart = () => { status.textContent = "Listening… speak now"; $("#micCall").classList.remove("hidden"); };
+    recognizer.onerror = (event) => { if (["done", "cancelled"].includes(stage)) return; status.textContent = event.error === "not-allowed" ? "Microphone blocked · type below" : "Didn’t catch that · try again"; };
+    recognizer.onresult = (event) => { const text = event.results[0][0].transcript; status.textContent = "Got it"; processReply(text); };
+    try { recognizer.start(); } catch { status.textContent = "Type your reply below"; }
+  }
+  function promptForStage() { if (stage !== "idle" && stage !== "done" && stage !== "cancelled") listen(); }
+  function greet() { stage = "name"; $("#startCall").classList.add("hidden"); $("#micCall").classList.toggle("hidden", !SpeechRecognizer); $("#endCall").classList.remove("hidden"); say("Hello, thanks for calling Proactive Care Hospital. I’m your automated receptionist. Let’s book an appointment. Please say your name after the tone.", promptForStage); }
+  async function processReply(raw) {
+    const text = raw.trim(); if (!text) return listen(); addLine("caller", text); status.textContent = "Connecting…";
+    if (/\b(stop|hang up|goodbye|end call)\b/i.test(text)) { stage = "cancelled"; say("No appointment has been booked. Thank you for calling Proactive Care. Goodbye.", finishCall); return; }
+    if (stage === "name") { patient = text.replace(/^(my name is|this is|i am|i'm)\s+/i, "").replace(/[.!?]+$/, "").slice(0, 80); stage = "specialty"; say(`Thank you, ${patient}. Which doctor specialty would you like: cardiology, dermatology, pediatrics, orthopedics, or general medicine?`, promptForStage); return; }
+    if (stage === "specialty") {
+      const lower = text.toLowerCase(); doctor = state.doctors.find((item) => lower.includes(item.specialty.toLowerCase()) || lower.includes(item.specialty.toLowerCase().split(" ")[0]));
+      if (!doctor) { say("Sorry, I couldn’t match that specialty. Please say cardiology, dermatology, pediatrics, orthopedics, or general medicine.", promptForStage); return; }
+      appointmentDate = state.simulatedToday;
+      let availability;
+      try { availability = await api(`/api/availability?doctorId=${encodeURIComponent(doctor.id)}&date=${appointmentDate}`); }
+      catch { stage = "specialty"; say("I’m having trouble checking the schedule. Please try that specialty once more.", promptForStage); return; }
+      if (!availability.slots.length) { stage = "specialty"; say(`There are no demo slots with ${doctor.name} today. Please choose another specialty.`, promptForStage); return; }
+      appointmentTime = availability.slots[0]; stage = "confirm";
+      say(`${doctor.name} has an opening today at ${formatVoiceTime(appointmentTime)}. Should I book that appointment for you? Say yes to confirm, or no to stop.`, promptForStage); return;
+    }
+    if (stage === "confirm") {
+      if (/\b(yes|yeah|yep|confirm|book|sure|okay|ok)\b/i.test(text)) {
+        try {
+          const result = await api("/api/appointments", { method: "POST", body: JSON.stringify({ patient, phone: `demo-call-${Date.now()}`, doctorId: doctor.id, date: appointmentDate, time: appointmentTime, reason: `${doctor.specialty} appointment` }) });
+          stage = "done"; await refresh(); say(`You’re booked with ${doctor.name} tomorrow at ${formatVoiceTime(appointmentTime)}. Your appointment reference is ${result.appointment.id}. Thank you for calling Proactive Care. Goodbye.`, finishCall);
+        } catch { stage = "specialty"; say("Sorry, that time was just taken. Let’s try another specialty.", promptForStage); }
+      } else if (/\b(no|nope|cancel)\b/i.test(text)) { stage = "cancelled"; say("Okay, I have not booked an appointment. Thank you for calling Proactive Care. Goodbye.", finishCall); }
+      else say("I didn’t catch that. Please say yes to confirm or no to cancel.", promptForStage);
+    }
+  }
+  function formatVoiceTime(value) { const [hour, minute] = value.split(":").map(Number); return `${hour % 12 || 12}:${String(minute).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}`; }
+  function finishCall() { recognizer?.abort(); window.speechSynthesis?.cancel(); status.textContent = stage === "done" ? "Appointment booked · Call ended" : "Call ended"; $("#micCall").classList.add("hidden"); $("#endCall").classList.add("hidden"); }
+  window.activeCallDemoCleanup = () => { recognizer?.abort(); window.speechSynthesis?.cancel(); };
+  $("#startCall").onclick = greet;
+  $("#micCall").onclick = listen;
+  $("#endCall").onclick = () => { recognizer?.abort(); window.speechSynthesis?.cancel(); stage = "cancelled"; finishCall(); };
+  $("#callInputForm").addEventListener("submit", (event) => { event.preventDefault(); const input = $("#callInput"); const text = input.value.trim(); input.value = ""; if (text) processReply(text); });
 }
 function showDoctors() {
   openModal("Doctors & departments", "CARE TEAM", `<div>${state.doctors.map((doctor) => { const department = state.departments.find((item) => item.name === doctor.department); return `<div class="doctor-manage-row"><span class="doctor-photo">${initials(doctor.name)}</span><span><b>${escapeHtml(doctor.name)} · ${escapeHtml(doctor.specialty)}</b><small>${escapeHtml(department?.name || doctor.department)} · ${escapeHtml(department?.floor || "Hospital campus")} · ${escapeHtml(department?.hours || "By appointment")}</small></span></div>`; }).join("")}</div>`);
@@ -85,7 +142,9 @@ function showAllAppointments() {
 }
 
 $("#newAppointment").onclick = showAppointmentForm;
+$("#startDemoCall").onclick = showCallDemo;
 $("#openChat").onclick = showChat; $("#chatAssistant").onclick = showChat;
+$("#callAssistant").onclick = showCallDemo;
 $("#viewDoctors").onclick = showDoctors; $("#knowledgeLink").onclick = showKnowledge;
 $("#delayAction").onclick = showDelayForm; $("#auditAction").onclick = showAudit;
 $("#allAppointments").onclick = showAllAppointments;
