@@ -2,13 +2,19 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { DatabaseSync } from "node:sqlite";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 
 let server;
 let baseUrl;
+let testDatabase;
 
 test.before(async () => {
   const port = 3100 + Math.floor(Math.random() * 500);
-  server = spawn(process.execPath, ["server.js"], { env: { ...process.env, PORT: String(port) }, stdio: "ignore" });
+  testDatabase = join(tmpdir(), `proactive-care-test-${randomUUID()}.sqlite`);
+  server = spawn(process.execPath, ["server.js"], { env: { ...process.env, PORT: String(port), DATABASE_PATH: testDatabase }, stdio: "ignore" });
   baseUrl = `http://127.0.0.1:${port}`;
   for (let attempts = 0; attempts < 50; attempts++) {
     try { if ((await fetch(`${baseUrl}/api/health`)).ok) return; } catch {}
@@ -23,13 +29,15 @@ async function post(path, body) {
   return { status: response.status, body: await response.json() };
 }
 
-test("dashboard returns demo schedule, care team, and audit data", async () => {
+test("dashboard returns demo schedule, care team, audit data, and SQLite health", async () => {
   const response = await fetch(`${baseUrl}/api/dashboard`);
   const data = await response.json();
   assert.equal(response.status, 200);
   assert.ok(data.doctors.length >= 5);
   assert.ok(data.appointments.length >= 8);
   assert.ok(data.audit.length >= 1);
+  const health = await (await fetch(`${baseUrl}/api/health`)).json();
+  assert.equal(health.database, "sqlite");
 });
 
 test("books only a free doctor slot and rejects conflicts", async () => {
@@ -39,6 +47,9 @@ test("books only a free doctor slot and rejects conflicts", async () => {
   assert.equal(first.body.appointment.status, "Confirmed");
   const duplicate = await post("/api/appointments", { ...booking, patient: "Another Patient", phone: "+91 90000 00002" });
   assert.equal(duplicate.status, 409);
+  const db = new DatabaseSync(testDatabase);
+  assert.equal(db.prepare("SELECT patient FROM appointments WHERE id = ?").get(first.body.appointment.id).patient, "Test Patient");
+  db.close();
 });
 
 test("assistant books a named specialty with a matching doctor", async () => {
@@ -108,4 +119,15 @@ test("Twilio SMS webhook returns TwiML and health reports demo mode", async () =
   const health = await (await fetch(`${baseUrl}/api/health`)).json();
   assert.equal(health.status, "ok");
   assert.equal(health.mode, "demo");
+  const greeting = await fetch(`${baseUrl}/api/twilio/voice`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "From=%2B919911111111&CallSid=CA-demo" });
+  assert.match(await greeting.text(), /<Gather/);
+  const specialty = await fetch(`${baseUrl}/api/twilio/voice?step=specialty`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "From=%2B919911111111&SpeechResult=cardiology&patient=Voice%20Test" });
+  const offer = await specialty.text();
+  assert.match(offer, /<Gather/);
+  assert.match(offer, /appointment tomorrow/i);
+  const currentSchedule = await (await fetch(`${baseUrl}/api/dashboard`)).json();
+  const available = ["09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "12:00", "14:00", "14:30", "15:00", "15:30", "16:00"].find((time) => !currentSchedule.appointments.some((item) => item.doctorId === "D-101" && item.date === "2026-10-13" && item.time === time && item.status !== "Cancelled"));
+  assert.ok(available, "voice test should have a free demo slot");
+  const confirm = await fetch(`${baseUrl}/api/twilio/voice?step=confirm&doctor=D-101&date=2026-10-13&time=${encodeURIComponent(available)}&caller=%2B919911111111&patient=Voice%20Test`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "Digits=1&From=%2B919911111111" });
+  assert.match(await confirm.text(), /Your appointment is booked/);
 });

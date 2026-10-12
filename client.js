@@ -35,6 +35,7 @@ function renderDoctors() {
 function render() {
   renderAppointments(); renderActivity(); renderHandoffs(); renderDoctors();
   $("#metricReminders").innerHTML = `${state.metrics.remindersSent} <small>/ 24</small>`;
+  $("#conversationTotal").textContent = `${state.metrics.activeConversations} conversation${state.metrics.activeConversations === 1 ? "" : "s"}`;
   const date = new Date(`${state.simulatedToday}T12:00:00`);
   $("#todayLabel").textContent = new Intl.DateTimeFormat("en-IN", { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(date);
   const eyebrow = new Intl.DateTimeFormat("en-IN", { weekday: "long", month: "long", day: "2-digit" }).format(date).toUpperCase();

@@ -1,10 +1,10 @@
 # Proactive Care — Virtual Receptionist
 
-A local, demo-ready hospital receptionist agent with a live appointment dashboard, patient chat simulator, slot-aware booking, facility FAQs, schedule delay announcements, opt-out handling, and an escalation queue. It uses Node.js built-ins, so no package installation or external service account is needed for the demo.
+A local, demo-ready hospital receptionist agent with a live appointment dashboard, patient chat simulator, slot-aware booking, facility FAQs, schedule delay announcements, opt-out handling, a voice-call booking webhook, and an escalation queue. It uses Node.js built-ins, including SQLite, so no package installation is needed for the demo.
 
 ## Start locally
 
-Requires Node.js 20 or later.
+Requires Node.js 22.5 or later (for the built-in SQLite module).
 
 ```sh
 npm start
@@ -12,7 +12,7 @@ npm start
 
 Open [http://localhost:3000](http://localhost:3000). For auto-restart while editing, use `npm run dev`. To run the automated flows, use `npm test`.
 
-The dashboard uses a simulated hospital and dates around October 12, 2026. All demo state resets when the server restarts. It does not contain real patient data and is not intended for clinical or production use.
+The dashboard uses a simulated hospital. Appointment, conversation, message, opt-out, handoff, and audit records persist in `data/proactive-care.sqlite`. Sample data is inserted the first time the database is initialized; subsequent restarts preserve changes. It does not contain real patient data and is not intended for clinical or production use.
 
 ## Architecture
 
@@ -27,12 +27,13 @@ Browser dashboard / chat simulator
  + slots   conversations   + audit
      └────────┼─────────────┘
               ▼
-  In-memory demo hospital data
+       SQLite database
               ▲
-     Twilio SMS webhook (optional)
+     Twilio SMS / Voice webhooks
 ```
 
-- `server.js` contains the HTTP API, conversation routing, booking rules, FAQs, handoff queue, delay notifications, and a Twilio-compatible inbound SMS endpoint.
+- `server.js` contains the HTTP API, conversation routing, booking rules, FAQs, handoff queue, delay notifications, and Twilio-compatible SMS and voice webhooks.
+- `database.js` initializes SQLite tables and saves schedule, message, conversation, consent, handoff, and audit data.
 - `client.js`, `index.html`, and `styles.css` provide the responsive staff dashboard and chat simulator.
 - `data.js` holds simulated doctors, departments, appointments, initial activity, and hospital-managed FAQ content.
 - `test/receptionist.test.js` exercises the core scheduling, safety, escalation, FAQ, opt-out, and webhook flows.
@@ -40,6 +41,7 @@ Browser dashboard / chat simulator
 ## Conversation flows
 
 1. **Book:** The patient names a specialty. The agent selects the matching doctor, checks a free demo slot, creates a confirmed appointment, and returns the appointment ID. Staff can also book from **New appointment**.
+   **Phone:** Twilio Voice calls enter `/api/twilio/voice`; callers choose booking, say their name and specialty, hear a demo availability slot, then confirm by speech or keypad. The slot uses simulated demo dates.
 2. **Cancel/reschedule:** The demo can modify an existing appointment matched to the current demo phone. If it cannot establish that match, it asks for an appointment ID instead of revealing details. The schedule frees cancelled slots. The chat simulator intentionally uses a shared demo identity, so use separate phone identifiers when exercising these flows through the API.
 3. **Delay update:** Staff select a doctor, date, and delay. One notice is recorded per affected non-cancelled appointment, and identical repeats are deduplicated.
 4. **Facility FAQ:** Replies are grounded in the fixed entries in `data.js`. Unknown questions receive an uncertainty response and are placed in the human handoff queue.
@@ -51,19 +53,19 @@ Every response identifies the service as an automated assistant. This demo uses 
 
 ## Phone and messaging setup
 
-The app runs locally and the simulator works without any credentials. A real phone number cannot call the local laptop merely by starting the app. For inbound SMS, deploy the server to a public HTTPS URL and configure a Twilio number's incoming-message webhook as:
+The app runs locally and the simulator works without any credentials. A real phone number cannot call the local laptop merely by starting the app. To test a real call, you need a Twilio account with a voice-enabled number (provider account and phone number are not included in this project), then make this server reachable from the internet over HTTPS. Set `PUBLIC_BASE_URL` and configure the Twilio number's voice webhook to:
 
 ```text
-POST https://YOUR_PUBLIC_HOST/api/twilio/sms
+POST https://YOUR_PUBLIC_HOST/api/twilio/voice
 ```
 
-Copy `.env.example` to `.env`, add the Twilio account values, then restart the app. `GET /api/health` reports whether these variables are present. The webhook currently accepts standard form-encoded Twilio fields (`From` and `Body`) or JSON and returns TwiML. Before exposing it publicly, add Twilio signature validation, HTTPS termination, secure secrets, durable storage, provider delivery-status callbacks, retries, rate limiting, and consent/identity enforcement. This scaffold does not originate outbound phone calls or connect a live provider account.
+For incoming SMS or WhatsApp, use `POST https://YOUR_PUBLIC_HOST/api/twilio/sms`. Copy `.env.example` to `.env`, add `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, and `PUBLIC_BASE_URL`, then restart. For local experiments, a secure tunnel such as ngrok or Cloudflare Tunnel can expose port 3000; the tunnel URL must be entered in the provider console. `GET /api/health` reports database and telephony credential status. The voice webhook returns TwiML and books a confirmed demo appointment after the caller accepts the offered slot. This does not purchase or provision a phone number. Before real patient use, add Twilio signature validation, authenticated staff access, validated identity, encrypted production data storage, delivery callbacks, retries, rate limiting, and healthcare privacy/security review.
 
 ## Configuration and next production steps
 
 - Edit simulated doctors, departments, FAQ knowledge, and sample appointments in `data.js`.
 - The dashboard's reminder cards are demonstration metrics; a real reminder scheduler and delivery adapter are not wired yet.
-- The demo data, conversations, audit, opt-out state, and handoffs live in memory. Use an encrypted, access-controlled persistent database and retention policy before production.
+- The local demo uses SQLite in `data/proactive-care.sqlite`. Use an encrypted, access-controlled production database, backup process, and retention policy before production.
 - A production assistant needs verified patient identity before retrieving appointment details, explicit channel consent, authenticated staff accounts/roles, immutable audit storage, localization, clinical review of emergency messaging, validated knowledge-base editing, and healthcare privacy/security review for the applicable jurisdiction.
 - Schedule updates in the demo use the appointment time as the displayed estimate and offer WAIT/RESCHEDULE/CANCEL choices. A production scheduler should compute realistic estimates and process those responses through verified appointment context.
 - Error states stay conservative: unavailable slots are rejected, unsupported facility questions are escalated, and patient-identifiable details are not put into demo audit records.
